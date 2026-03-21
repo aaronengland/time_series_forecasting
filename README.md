@@ -10,14 +10,15 @@ A production-grade forecasting pipeline that predicts monthly employee attrition
 2. [What Is Time Series Forecasting?](#what-is-time-series-forecasting)
 3. [Understanding SARIMA](#understanding-sarima)
 4. [Understanding Facebook Prophet](#understanding-facebook-prophet)
-5. [SARIMA vs Prophet: When to Use Which](#sarima-vs-prophet-when-to-use-which)
-6. [Dataset](#dataset)
-7. [Project Structure](#project-structure)
-8. [Pipeline Walkthrough](#pipeline-walkthrough)
-9. [Results](#results)
-10. [Getting Started](#getting-started)
-11. [Key Design Decisions](#key-design-decisions)
-12. [Production Considerations](#production-considerations)
+5. [Model Inputs and Target Variable](#model-inputs-and-target-variable)
+6. [SARIMA vs Prophet: When to Use Which](#sarima-vs-prophet-when-to-use-which)
+7. [Dataset](#dataset)
+8. [Project Structure](#project-structure)
+9. [Pipeline Walkthrough](#pipeline-walkthrough)
+10. [Results](#results)
+11. [Getting Started](#getting-started)
+12. [Key Design Decisions](#key-design-decisions)
+13. [Production Considerations](#production-considerations)
 
 ---
 
@@ -213,6 +214,50 @@ One of Prophet's biggest strengths is its interpretable component plots:
 
 ---
 
+## Model Inputs and Target Variable
+
+Both models in this project forecast the same target variable using time as the sole input. There are no external features (regressors) — the models learn purely from the historical patterns in the target series itself.
+
+### Target Variable (What I Am Predicting)
+
+| | |
+|---|---|
+| **Variable** | `attrition_rate` |
+| **Definition** | The company-wide average monthly employee attrition rate, expressed as a proportion (e.g., 0.11 = 11%) |
+| **Granularity** | One value per month, aggregated across all 6 departments |
+| **Range in dataset** | 0.04 to 0.30 (4% to 30%) |
+
+### Independent Variable (What the Models Use as Input)
+
+| | SARIMA | Prophet |
+|---|---|---|
+| **Primary input** | The historical sequence of `attrition_rate` values, indexed by time position | The historical sequence of `attrition_rate` values, indexed by calendar date |
+| **Column convention** | The series is passed as a single array of values; time order is implicit from the index | Requires two columns: `ds` (date) and `y` (attrition_rate) |
+| **What the model learns from** | Past values of the series itself (autoregression) and past forecast errors (moving average), at both non-seasonal and seasonal (12-month) lags | The calendar date, which Prophet decomposes into a trend component and Fourier-based seasonal components |
+| **External regressors** | None used (though SARIMAX supports them) | None used (though Prophet supports them via `add_regressor()`) |
+
+### How Each Model Uses the Input Differently
+
+**SARIMA** treats forecasting as a **statistical autoregressive problem**. It predicts the next value based on a linear combination of:
+- Previous values of the series (AR terms, controlled by p and P)
+- Previous forecast errors (MA terms, controlled by q and Q)
+- Differencing to remove trend and seasonal patterns (controlled by d and D)
+
+The model never "sees" the calendar date — it only sees the ordered sequence of values and uses the lag structure to capture patterns.
+
+**Prophet** treats forecasting as a **curve-fitting problem**. It predicts the next value by decomposing the calendar date into:
+- A trend function (piecewise linear growth, with automatic changepoint detection)
+- A seasonality function (Fourier series fit to the yearly cycle)
+- These are combined additively or multiplicatively to produce the forecast
+
+Prophet explicitly uses the date as its input and extracts seasonal patterns from the calendar (e.g., "January tends to be high").
+
+### Key Distinction
+
+Neither model uses external features like headcount, satisfaction scores, or economic indicators as inputs. Both models forecast attrition purely from its own historical pattern — this is the defining characteristic of **univariate time series forecasting**. The engineered features (lag variables, rolling averages, month dummies) created in the preprocessing notebook are available for future modeling approaches but are not consumed by SARIMA or Prophet in this project.
+
+---
+
 ## SARIMA vs Prophet: When to Use Which
 
 | Scenario | Recommended Model | Why |
@@ -373,11 +418,13 @@ The `ModelComparison` class loads both serialized models and produces three comp
 
 | Metric | SARIMA | Prophet | Winner |
 |--------|--------|---------|--------|
-| **RMSE** | — | — | — |
-| **MAE** | — | — | — |
-| **MAPE** | — | — | — |
+| **RMSE** | 0.0152 | 0.0224 | SARIMA |
+| **MAE** | 0.0100 | 0.0177 | SARIMA |
+| **MAPE** | 9.40% | 15.99% | SARIMA |
 
-*Results will be populated after re-running notebooks 02 through 05 with the new train/validation/test split. Both models are tuned using the same optimization metric (MAPE on the validation set) via Optuna Bayesian optimization with TPE sampling and 20 trials each. The final metrics are computed on the held-out test set, ensuring an unbiased comparison.*
+**SARIMA outperforms Prophet by 6.59 percentage points on MAPE.**
+
+*Both models are tuned using the same optimization metric (MAPE on the validation set) via Optuna Bayesian optimization with TPE sampling and 20 trials each. The final metrics above are computed on the held-out test set (never seen during tuning), ensuring an unbiased comparison.*
 
 ### What the Metrics Mean
 
@@ -387,11 +434,17 @@ The `ModelComparison` class loads both serialized models and produces three comp
 
 ### Recommendation
 
-*To be updated after re-running with the new train/validation/test split.* Both models will be compared on unbiased test set metrics. In general:
+**SARIMA** is the recommended model for this dataset:
+- Lower error across all three metrics by a significant margin (MAPE: 9.40% vs 15.99%)
+- The data has strong, regular seasonality with a fixed 12-month period — exactly what SARIMA's seasonal parameters are designed to capture
+- Best order found was SARIMA(0,0,2)(1,1,1,12), meaning the model leverages 2 lags of past errors, seasonal autoregression, seasonal differencing, and a seasonal moving average term
+- Statistically rigorous 95% confidence intervals grounded in probability theory
 
-- **SARIMA** excels when the data has strong, regular seasonality with a fixed period — its seasonal parameters are purpose-built for this. It also provides statistically rigorous 95% confidence intervals grounded in probability theory.
-- **Prophet** provides interpretable trend and seasonality component plots that are excellent for stakeholder communication, and its automatic changepoint detection makes it more robust to sudden regime shifts.
-- In a production setting, running both models and comparing forecasts provides an additional layer of validation.
+**Prophet** remains valuable as a complementary model:
+- Best parameters found were changepoint_prior_scale=0.4764, seasonality_prior_scale=3.4669, seasonality_mode=multiplicative
+- Its interpretable trend and seasonality component plots are excellent for stakeholder communication
+- Automatic changepoint detection makes it more robust to sudden regime shifts
+- In a production setting, running both models and comparing forecasts provides an additional layer of validation
 
 ---
 
