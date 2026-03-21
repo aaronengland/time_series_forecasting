@@ -111,7 +111,21 @@ A full SARIMA model is written as **SARIMA(p,d,q)(P,D,Q,s)**. In this project, s
 
 ### How I Tune SARIMA
 
-Finding the right (p,d,q)(P,D,Q) combination is critical. I use **Optuna**, a hyperparameter optimization framework, to search over 20 different parameter combinations. Each combination is scored by fitting the model on the training data, forecasting on the held-out test set, and calculating the **MAPE (Mean Absolute Percentage Error)**. Lower MAPE is better, because it means the model's predictions are closer to the actual values. This is the same metric I use to tune Prophet, ensuring a fair apples-to-apples comparison.
+Finding the right (p,d,q)(P,D,Q) combination is critical. I use **Optuna** to perform **Bayesian optimization** via the **TPE (Tree-structured Parzen Estimator)** sampler. Unlike grid search (which exhaustively tries every combination) or random search (which samples blindly), Bayesian optimization learns from previous trials to intelligently focus on the most promising regions of the parameter space. This makes it far more efficient — 20 trials with TPE can outperform hundreds of random trials.
+
+Each of the 20 trials proposes a different combination of SARIMA parameters. The search space is:
+
+| Hyperparameter | Type | Range | Description |
+|----------------|------|-------|-------------|
+| **p** | Integer | 0 - 2 | Non-seasonal autoregressive order |
+| **d** | Integer | 0 - 1 | Non-seasonal differencing order |
+| **q** | Integer | 0 - 2 | Non-seasonal moving average order |
+| **P** | Integer | 0 - 1 | Seasonal autoregressive order |
+| **D** | Integer | 0 - 1 | Seasonal differencing order |
+| **Q** | Integer | 0 - 1 | Seasonal moving average order |
+| **s** | Fixed | 12 | Seasonal period (monthly data, yearly cycle) |
+
+For each trial, the model is fit on the training data, then forecasted on the **validation set**, and scored by **MAPE (Mean Absolute Percentage Error)**. Lower MAPE is better. This is the same metric I use to tune Prophet, ensuring a fair apples-to-apples comparison. The final model is then refit on the combined train+validation data and evaluated on the held-out test set for an unbiased performance estimate.
 
 ### SARIMA Diagnostics
 
@@ -163,13 +177,13 @@ y(t) = trend(t) + seasonality(t) + error(t)
 
 ### Key Hyperparameters
 
-| Parameter | What It Controls | Search Range |
-|-----------|-----------------|-----------------|
-| **changepoint_prior_scale** | How flexible the trend is. Higher values = more sensitive to trend changes. Lower values = smoother trend. | 0.001 to 0.5 |
-| **seasonality_prior_scale** | How strong the seasonal effects are. Higher values = larger seasonal swings. | 0.01 to 10.0 |
-| **seasonality_mode** | How seasonality combines with trend. "Additive" means seasonal effect is a fixed amount (e.g., +2% in January). "Multiplicative" means it is proportional (e.g., 20% higher in January). | additive or multiplicative |
+| Hyperparameter | Type | Search Range | What It Controls |
+|----------------|------|-------------|-----------------|
+| **changepoint_prior_scale** | Continuous (float) | 0.001 to 0.5 | How flexible the trend is. Higher values = more sensitive to trend changes. Lower values = smoother trend. |
+| **seasonality_prior_scale** | Continuous (float) | 0.01 to 10.0 | How strong the seasonal effects are. Higher values = larger seasonal swings. |
+| **seasonality_mode** | Categorical | additive or multiplicative | How seasonality combines with trend. "Additive" means seasonal effect is a fixed amount (e.g., +2% in January). "Multiplicative" means it is proportional (e.g., 20% higher in January). |
 
-I use **Optuna** with 20 trials to find the best combination, optimizing for the lowest **MAPE (Mean Absolute Percentage Error)** on the test set — the same metric I use for SARIMA.
+Just like SARIMA, I use **Optuna** with **Bayesian optimization (TPE sampler)** to search over 20 trials, optimizing for the lowest **MAPE (Mean Absolute Percentage Error)** on the **validation set**. The TPE sampler builds a probabilistic model of which parameter regions produce good results and concentrates sampling there, making the 20-trial budget much more effective than a naive grid or random search. The final model is then refit on the combined train+validation data and evaluated on the held-out test set for an unbiased performance estimate.
 
 ### Prophet Component Decomposition
 
@@ -312,33 +326,31 @@ The `TimeSeriesPreprocessor` class prepares the data for modeling:
 - **Stationarity Testing**: ADF test (p < 0.000001) and KPSS test (p = 0.10) both confirm stationarity
 - **Differencing**: First-order differencing applied (d=1)
 - **Feature Engineering**: Lag features (1, 3, 6, 12 months), rolling averages (3, 6, 12 months), month dummies
-- **Train/Test Split**: 60 months training, 12 months test (temporal split — no data leakage)
+- **Train/Validation/Test Split**: 48 months training, 12 months validation, 12 months test (temporal split — no data leakage). The validation set is used for hyperparameter tuning (Optuna), and the test set is held out for final unbiased evaluation.
 
-![Train/Test Split](02_preprocessing/output/10_train_test_split.png)
-*Visualization of the temporal train/test split. The vertical line separates 60 months of training data from 12 months of held-out test data. This split ensures no future information leaks into training.*
+![Train/Validation/Test Split](02_preprocessing/output/10_train_valid_test_split.png)
+*Visualization of the temporal 3-way split. The first boundary separates training data from the validation set (used for Optuna tuning). The second boundary separates validation from the held-out test set (used only for final evaluation). This ensures the reported metrics are not optimistically biased by hyperparameter selection.*
 
 ### Step 4: SARIMA Modeling (`03_sarima`)
 
 The `SarimaModel` class builds a SARIMA model:
 
-1. **Hyperparameter Search**: Optuna searches 20 combinations of (p,d,q)(P,D,Q) with s=12, minimizing MAPE on the test set using TPE (Tree-structured Parzen Estimator) sampling
-2. **Model Fitting**: Best parameters are used to fit the final model
+1. **Bayesian Hyperparameter Search**: Optuna with TPE sampler searches 20 combinations of (p,d,q)(P,D,Q) with s=12, minimizing MAPE on the validation set. The search explores p in [0,2], d in [0,1], q in [0,2], P in [0,1], D in [0,1], Q in [0,1].
+2. **Model Fitting**: Best parameters are used to refit the final model on the combined train+validation data
 3. **Diagnostics**: 4-panel residual analysis (residuals over time, histogram with KDE, Q-Q plot, ACF of residuals)
 4. **Forecasting**: 12-month forecast with 95% confidence intervals
-5. **Evaluation**: RMSE, MAE, MAPE computed on the held-out test set
+5. **Evaluation**: RMSE, MAE, MAPE computed on the held-out test set (never seen during tuning)
 
 ### Step 5: Prophet Modeling (`04_prophet`)
 
 The `ProphetModel` class builds a Prophet model:
 
 1. **Data Preparation**: Reformat to Prophet's required `ds`/`y` column convention
-2. **Hyperparameter Search**: Optuna tunes changepoint_prior_scale, seasonality_prior_scale, and seasonality_mode over 20 trials, minimizing MAPE on the test set
-3. **Model Fitting**: Best parameters used to fit the final model
+2. **Bayesian Hyperparameter Search**: Optuna with TPE sampler tunes 3 hyperparameters over 20 trials, minimizing MAPE on the validation set. The search explores changepoint_prior_scale in [0.001, 0.5], seasonality_prior_scale in [0.01, 10.0], and seasonality_mode in {additive, multiplicative}.
+3. **Model Fitting**: Best parameters used to refit the final model on combined train+validation data
 4. **Component Plots**: Trend and seasonality decomposition visualizations
 5. **Forecasting**: 12-month forecast with 95% uncertainty intervals
-6. **Evaluation**: Same metrics as SARIMA for fair comparison
-
-**Best Parameters Found**: changepoint_prior_scale=0.2375, seasonality_prior_scale=0.0764, seasonality_mode=additive
+6. **Evaluation**: RMSE, MAE, MAPE computed on the held-out test set — same metrics as SARIMA for fair comparison
 
 ### Step 6: Model Comparison (`05_comparison`)
 
@@ -361,29 +373,25 @@ The `ModelComparison` class loads both serialized models and produces three comp
 
 | Metric | SARIMA | Prophet | Winner |
 |--------|--------|---------|--------|
-| **RMSE** | 0.0240 | 0.0216 | Prophet |
-| **MAE** | 0.0204 | 0.0174 | Prophet |
-| **MAPE** | 19.06% | 15.81% | Prophet |
+| **RMSE** | — | — | — |
+| **MAE** | — | — | — |
+| **MAPE** | — | — | — |
 
-**Prophet outperforms SARIMA by 3.25 percentage points on MAPE.**
-
-*Note: Both models are tuned using the same optimization metric (MAPE) via Optuna with TPE sampling and 20 trials each, ensuring a fair comparison.*
+*Results will be populated after re-running notebooks 02 through 05 with the new train/validation/test split. Both models are tuned using the same optimization metric (MAPE on the validation set) via Optuna Bayesian optimization with TPE sampling and 20 trials each. The final metrics are computed on the held-out test set, ensuring an unbiased comparison.*
 
 ### What the Metrics Mean
 
 - **RMSE (Root Mean Squared Error)**: Average prediction error in the same units as attrition rate. Penalizes large errors more heavily. Lower is better.
 - **MAE (Mean Absolute Error)**: Average absolute prediction error. More robust to outliers than RMSE. Lower is better.
-- **MAPE (Mean Absolute Percentage Error)**: Average error as a percentage of the actual value. Easiest to interpret ("the model is off by ~16% on average"). Lower is better.
+- **MAPE (Mean Absolute Percentage Error)**: Average error as a percentage of the actual value. Easiest to interpret (e.g., "the model is off by ~10% on average"). Lower is better.
 
 ### Recommendation
 
-**Prophet** is the recommended model for this dataset:
-- Lower error across all three metrics
-- Interpretable trend and seasonality component plots are valuable for stakeholder communication
-- Additive seasonality mode aligns well with the data's structure
-- Automatic changepoint detection adapts to trend shifts
+*To be updated after re-running with the new train/validation/test split.* Both models will be compared on unbiased test set metrics. In general:
 
-**SARIMA** remains valuable as a secondary model — its statistically rigorous confidence intervals provide an important cross-check, and in some months it outperforms Prophet.
+- **SARIMA** excels when the data has strong, regular seasonality with a fixed period — its seasonal parameters are purpose-built for this. It also provides statistically rigorous 95% confidence intervals grounded in probability theory.
+- **Prophet** provides interpretable trend and seasonality component plots that are excellent for stakeholder communication, and its automatic changepoint detection makes it more robust to sudden regime shifts.
+- In a production setting, running both models and comparing forecasts provides an additional layer of validation.
 
 ---
 
@@ -438,7 +446,8 @@ Serialized models are saved to both local disk and S3 for downstream use.
 | **Synthetic data** | Full control over seasonality, trend, and anomalies. Demonstrates ability to design realistic HR scenarios without exposing real employee data. |
 | **Company-level aggregation** | Total attrition rate is the most actionable metric for workforce planning and headcount budgeting. |
 | **SARIMA + Prophet** | Covers both statistical rigor (SARIMA) and business interpretability (Prophet). Running both enables informed model selection. |
-| **MAPE as shared optimization metric** | Both models are tuned to minimize the same metric (MAPE on the test set), ensuring a fair apples-to-apples comparison. |
+| **MAPE as shared optimization metric** | Both models are tuned to minimize the same metric (MAPE on the validation set), ensuring a fair apples-to-apples comparison. The test set is never seen during tuning. |
+| **Train/validation/test split** | Hyperparameters are tuned on the validation set, and final metrics are reported on a held-out test set never seen during tuning. This prevents optimistic bias in reported results. |
 | **Optuna for both models** | Consistent hyperparameter optimization framework with TPE sampling and reproducible seeds. |
 | **12-month test window** | Realistic forecast horizon for quarterly and annual planning cycles in HCM. |
 | **95% confidence intervals** | Production forecasting systems need uncertainty quantification for risk assessment and scenario planning. |

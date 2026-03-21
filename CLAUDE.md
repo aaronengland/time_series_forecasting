@@ -22,7 +22,7 @@ Synthetic monthly employee attrition data generated in notebook 00. The data sim
 time_series_forecasting/
 ├── 00_data_collection/notebook.ipynb     # Generate synthetic monthly attrition data, upload to S3
 ├── 01_eda/notebook.ipynb                 # Time series EDA: trends, seasonality, decomposition
-├── 02_preprocessing/notebook.ipynb       # Stationarity tests, differencing, train/test split
+├── 02_preprocessing/notebook.ipynb       # Stationarity tests, differencing, train/validation/test split
 ├── 03_sarima/notebook.ipynb              # SARIMA model with Optuna tuning
 ├── 04_prophet/notebook.ipynb             # Facebook Prophet model with Optuna tuning
 ├── 05_comparison/notebook.ipynb          # SARIMA vs Prophet comparison
