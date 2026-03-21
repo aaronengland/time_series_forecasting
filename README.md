@@ -298,9 +298,6 @@ I generate synthetic (but realistic) monthly employee attrition data that mirror
 - **Random Events**: Occasional restructuring months with 2-3x normal departures
 - **Noise**: Random variation to simulate real-world messiness
 
-![Generated Data Overview](00_data_collection/output/01_generated_data_overview.png)
-*4-panel overview of the generated dataset: attrition rates over time, headcount growth, departmental breakdown, and distribution of key features.*
-
 ---
 
 ## Project Structure
