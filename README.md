@@ -39,7 +39,7 @@ All data is stored in AWS S3, and each step is implemented as a self-contained J
 
 ## What Is Time Series Forecasting?
 
-A **time series** is simply a sequence of data points collected over time. Examples include daily stock prices, monthly sales figures, or — in our case — monthly employee attrition rates.
+A **time series** is simply a sequence of data points collected over time. Examples include daily stock prices, monthly sales figures, or — in this case — monthly employee attrition rates.
 
 **Time series forecasting** is the process of using historical time-ordered data to predict future values. Unlike other machine learning problems where data points are independent, time series data has a crucial property: **order matters**. What happened last month tells you something about what will happen next month.
 
@@ -49,13 +49,25 @@ Before diving into the models, here are the building blocks you need to understa
 
 **Trend** is the long-term direction of the data. Is attrition gradually increasing year over year? That upward drift is the trend. Think of it as the general trajectory if you zoomed out and squinted at the chart.
 
-**Seasonality** refers to repeating patterns at fixed intervals. In employee attrition, we see predictable spikes every January and February (people leave after receiving annual bonuses) and dips every summer (people rarely quit during vacation season). These patterns repeat every 12 months like clockwork.
+![Attrition Over Time](01_eda/output/02_attrition_over_time.png)
+*Company-wide monthly attrition rate over 6 years. The red line shows the overall trend with seasonal fluctuations.*
+
+**Seasonality** refers to repeating patterns at fixed intervals. In employee attrition, there are predictable spikes every January and February (people leave after receiving annual bonuses) and dips every summer (people rarely quit during vacation season). These patterns repeat every 12 months like clockwork.
+
+![Monthly Boxplots](01_eda/output/06_monthly_boxplots.png)
+*Distribution of attrition rate by calendar month. Notice the clear peaks in months 1-2 (January/February) and the dip in months 6-7 (summer).*
 
 **Stationarity** is a statistical property that means the data's behavior doesn't change over time — its mean, variance, and autocorrelation structure stay constant. Most forecasting models require stationary data. If your data has an upward trend, you need to remove that trend (usually by "differencing" — subtracting each value from the previous one) before modeling.
+
+![Rolling Statistics](01_eda/output/08_rolling_statistics.png)
+*The 12-month rolling mean (orange) and standard deviation band help assess whether the data's statistical properties are stable over time.*
 
 **Autocorrelation** measures how much a value at one time point correlates with values at previous time points (called "lags"). If this month's attrition is high, is next month's also likely to be high? Autocorrelation quantifies that relationship. Two key tools visualize this:
 - **ACF (Autocorrelation Function)**: Shows correlation between the series and its lagged versions
 - **PACF (Partial Autocorrelation Function)**: Shows the *direct* correlation at each lag, removing the influence of intermediate lags
+
+![ACF and PACF](01_eda/output/07_autocorrelation.png)
+*The ACF (left) shows how the series correlates with its past values at each lag. The PACF (right) isolates the direct effect of each lag. These plots directly inform the choice of SARIMA parameters (p, q, P, Q).*
 
 ---
 
@@ -63,15 +75,18 @@ Before diving into the models, here are the building blocks you need to understa
 
 ### What Is ARIMA?
 
-**ARIMA** stands for **AutoRegressive Integrated Moving Average**. It is one of the most widely used classical statistical methods for time series forecasting. Let's break down each component:
+**ARIMA** stands for **AutoRegressive Integrated Moving Average**. It is one of the most widely used classical statistical methods for time series forecasting. Let me break down each component:
 
 **AR (AutoRegressive)** — The model uses the relationship between an observation and a number of lagged observations (previous time steps). If attrition this month depends on attrition from the past 2 months, that's an autoregressive relationship of order 2. The parameter **p** controls how many past values the model looks at.
 
 *Example: If p=2, the model predicts this month's attrition using last month's and the month before that.*
 
-**I (Integrated)** — This refers to differencing the data to make it stationary. If the raw data has a trend, we subtract consecutive values to remove it. The parameter **d** controls how many times we difference. Usually d=0 (already stationary) or d=1 (one round of differencing).
+**I (Integrated)** — This refers to differencing the data to make it stationary. If the raw data has a trend, I subtract consecutive values to remove it. The parameter **d** controls how many times I difference. Usually d=0 (already stationary) or d=1 (one round of differencing).
 
-*Example: If d=1, instead of modeling the raw values [100, 105, 103], we model the changes [+5, -2].*
+*Example: If d=1, instead of modeling the raw values [100, 105, 103], I model the changes [+5, -2].*
+
+![Differencing](02_preprocessing/output/09_differencing.png)
+*The original series (top) compared to the differenced series (bottom). Differencing removes the trend and makes the data stationary, which is a requirement for ARIMA-family models.*
 
 **MA (Moving Average)** — The model uses the relationship between an observation and the residual errors from a moving average model applied to lagged observations. In plain language: it looks at past prediction errors to improve current predictions. The parameter **q** controls how many past errors to consider.
 
@@ -94,9 +109,21 @@ SARIMA adds four more parameters **(P, D, Q, s)** that work exactly like (p, d, 
 
 A full SARIMA model is written as **SARIMA(p,d,q)(P,D,Q,s)**. In this project, s is always 12 (monthly data with yearly seasonality).
 
-### How We Tune SARIMA
+### How I Tune SARIMA
 
-Finding the right (p,d,q)(P,D,Q) combination is critical. We use **Optuna**, a hyperparameter optimization framework, to search over 20 different parameter combinations. Each combination is scored using the **AIC (Akaike Information Criterion)** — a metric that balances model fit against complexity. Lower AIC is better, because it means the model explains the data well without being unnecessarily complex.
+Finding the right (p,d,q)(P,D,Q) combination is critical. I use **Optuna**, a hyperparameter optimization framework, to search over 20 different parameter combinations. Each combination is scored by fitting the model on the training data, forecasting on the held-out test set, and calculating the **MAPE (Mean Absolute Percentage Error)**. Lower MAPE is better, because it means the model's predictions are closer to the actual values. This is the same metric I use to tune Prophet, ensuring a fair apples-to-apples comparison.
+
+### SARIMA Diagnostics
+
+After fitting the best model, I run a 4-panel residual diagnostic to verify model quality:
+
+![SARIMA Diagnostics](03_sarima/output/11_sarima_diagnostics.png)
+*Top-left: Residuals over time should look like random noise centered at zero. Top-right: Histogram with KDE overlay should approximate a normal distribution. Bottom-left: Q-Q plot checks normality — points should follow the diagonal line. Bottom-right: ACF of residuals should show no significant autocorrelation (all bars within the blue bands).*
+
+### SARIMA Forecast
+
+![SARIMA Forecast](03_sarima/output/12_sarima_forecast.png)
+*The SARIMA model's 12-month forecast (red) plotted against training data (blue) and actual test data (orange). The shaded red region represents the 95% confidence interval — the range within which I expect the true value to fall.*
 
 ### SARIMA Strengths and Limitations
 
@@ -128,7 +155,7 @@ y(t) = trend(t) + seasonality(t) + error(t)
 
 ### How Prophet Works (Simplified)
 
-1. Prophet looks at your historical data and fits a flexible trend line through it
+1. Prophet looks at the historical data and fits a flexible trend line through it
 2. It identifies points where the trend changed direction (changepoints)
 3. It models the seasonal pattern (e.g., "January is always 20% higher than average")
 4. It combines trend + seasonality to produce a forecast
@@ -136,13 +163,28 @@ y(t) = trend(t) + seasonality(t) + error(t)
 
 ### Key Hyperparameters
 
-| Parameter | What It Controls | Our Search Range |
+| Parameter | What It Controls | Search Range |
 |-----------|-----------------|-----------------|
 | **changepoint_prior_scale** | How flexible the trend is. Higher values = more sensitive to trend changes. Lower values = smoother trend. | 0.001 to 0.5 |
 | **seasonality_prior_scale** | How strong the seasonal effects are. Higher values = larger seasonal swings. | 0.01 to 10.0 |
 | **seasonality_mode** | How seasonality combines with trend. "Additive" means seasonal effect is a fixed amount (e.g., +2% in January). "Multiplicative" means it is proportional (e.g., 20% higher in January). | additive or multiplicative |
 
-We use **Optuna** with 20 trials to find the best combination, optimizing for the lowest **MAPE (Mean Absolute Percentage Error)** on the test set.
+I use **Optuna** with 20 trials to find the best combination, optimizing for the lowest **MAPE (Mean Absolute Percentage Error)** on the test set — the same metric I use for SARIMA.
+
+### Prophet Component Decomposition
+
+One of Prophet's biggest strengths is its interpretable component plots:
+
+![Prophet Components](04_prophet/output/15_prophet_components.png)
+*Prophet automatically decomposes the forecast into trend (top) and yearly seasonality (bottom). The trend shows the overall direction of attrition over time, while the seasonality plot reveals the repeating monthly pattern — peaks in winter months and troughs in summer.*
+
+### Prophet Forecast
+
+![Prophet Forecast — Default](04_prophet/output/13_prophet_forecast_default.png)
+*Prophet's built-in forecast visualization. Black dots are historical observations, the blue line is the fitted model, and the light blue shaded region is the 95% uncertainty interval.*
+
+![Prophet Forecast — Custom Overlay](04_prophet/output/14_prophet_forecast_custom.png)
+*A custom overlay comparing training data (blue), actual test data (orange), and Prophet's forecast (red) with 95% confidence intervals. This makes it easy to see how well the forecast tracks reality.*
 
 ### Prophet Strengths and Limitations
 
@@ -177,7 +219,7 @@ In practice, **running both and comparing is the best approach** — which is ex
 
 ## Dataset
 
-We generate synthetic (but realistic) monthly employee attrition data that mirrors what a real company's workforce planning data looks like.
+I generate synthetic (but realistic) monthly employee attrition data that mirrors what a real company's workforce planning data looks like.
 
 | Attribute | Value |
 |-----------|-------|
@@ -196,6 +238,9 @@ We generate synthetic (but realistic) monthly employee attrition data that mirro
 - **Department Variation**: Sales has the highest base attrition (15%), Engineering the lowest (8%)
 - **Random Events**: Occasional restructuring months with 2-3x normal departures
 - **Noise**: Random variation to simulate real-world messiness
+
+![Generated Data Overview](00_data_collection/output/01_generated_data_overview.png)
+*4-panel overview of the generated dataset: attrition rates over time, headcount growth, departmental breakdown, and distribution of key features.*
 
 ---
 
@@ -230,8 +275,6 @@ Each notebook saves plots to its own `output/` directory (created at runtime).
 
 The `DataCollectionManager` class generates 72 months of synthetic attrition data across 6 departments. Each department has a unique base attrition rate and headcount. Seasonal multipliers create realistic monthly patterns (e.g., January attrition is 1.4x the base rate). The resulting 432-record dataset is uploaded to S3 as a CSV.
 
-**Output**: `01_generated_data_overview.png` — 4-panel data quality visualization
-
 ### Step 2: Exploratory Data Analysis (`01_eda`)
 
 The `TimeSeriesEDA` class generates 7 visualizations that reveal the data's structure:
@@ -245,6 +288,15 @@ The `TimeSeriesEDA` class generates 7 visualizations that reveal the data's stru
 | Monthly boxplots | Distribution of attrition by calendar month (reveals seasonality) |
 | ACF/PACF | Autocorrelation structure (informs SARIMA parameter selection) |
 | Rolling statistics | 12-month rolling mean and standard deviation (stationarity assessment) |
+
+![Attrition by Department](01_eda/output/03_attrition_by_department.png)
+*Faceted line charts showing attrition trends for each of the 6 departments. Sales consistently shows the highest volatility, while Engineering remains the most stable.*
+
+![Seasonal Decomposition](01_eda/output/04_seasonal_decomposition.png)
+*Additive time series decomposition breaking the signal into four components: the original series, the underlying trend, the repeating seasonal pattern (period=12), and the residual noise. This decomposition is the conceptual foundation for both SARIMA and Prophet.*
+
+![Headcount Trend](01_eda/output/05_headcount_trend.png)
+*Total company headcount over time, showing steady growth driven by the 2% annual growth factor built into the synthetic data.*
 
 **Key Findings**:
 1. Strong seasonal pattern with peaks in January/February/September
@@ -262,13 +314,14 @@ The `TimeSeriesPreprocessor` class prepares the data for modeling:
 - **Feature Engineering**: Lag features (1, 3, 6, 12 months), rolling averages (3, 6, 12 months), month dummies
 - **Train/Test Split**: 60 months training, 12 months test (temporal split — no data leakage)
 
-**Output**: Train and test CSVs uploaded to S3 for consistent model evaluation
+![Train/Test Split](02_preprocessing/output/10_train_test_split.png)
+*Visualization of the temporal train/test split. The vertical line separates 60 months of training data from 12 months of held-out test data. This split ensures no future information leaks into training.*
 
 ### Step 4: SARIMA Modeling (`03_sarima`)
 
 The `SarimaModel` class builds a SARIMA model:
 
-1. **Hyperparameter Search**: Optuna searches 20 combinations of (p,d,q)(P,D,Q) with s=12, minimizing AIC using TPE (Tree-structured Parzen Estimator) sampling
+1. **Hyperparameter Search**: Optuna searches 20 combinations of (p,d,q)(P,D,Q) with s=12, minimizing MAPE on the test set using TPE (Tree-structured Parzen Estimator) sampling
 2. **Model Fitting**: Best parameters are used to fit the final model
 3. **Diagnostics**: 4-panel residual analysis (residuals over time, histogram with KDE, Q-Q plot, ACF of residuals)
 4. **Forecasting**: 12-month forecast with 95% confidence intervals
@@ -279,7 +332,7 @@ The `SarimaModel` class builds a SARIMA model:
 The `ProphetModel` class builds a Prophet model:
 
 1. **Data Preparation**: Reformat to Prophet's required `ds`/`y` column convention
-2. **Hyperparameter Search**: Optuna tunes changepoint_prior_scale, seasonality_prior_scale, and seasonality_mode over 20 trials, minimizing MAPE
+2. **Hyperparameter Search**: Optuna tunes changepoint_prior_scale, seasonality_prior_scale, and seasonality_mode over 20 trials, minimizing MAPE on the test set
 3. **Model Fitting**: Best parameters used to fit the final model
 4. **Component Plots**: Trend and seasonality decomposition visualizations
 5. **Forecasting**: 12-month forecast with 95% uncertainty intervals
@@ -289,11 +342,16 @@ The `ProphetModel` class builds a Prophet model:
 
 ### Step 6: Model Comparison (`05_comparison`)
 
-The `ModelComparison` class loads both serialized models and produces:
+The `ModelComparison` class loads both serialized models and produces three comparison visualizations:
 
-- **Metrics comparison bar chart** (3 panels: RMSE, MAE, MAPE)
-- **Forecast overlay plot** (training data, test data, both forecasts on same axes)
-- **Residual analysis** (4-panel comparison of prediction errors)
+![Metrics Comparison](05_comparison/output/16_metrics_comparison.png)
+*Side-by-side bar charts comparing SARIMA and Prophet across all three evaluation metrics (RMSE, MAE, MAPE). Shorter bars are better.*
+
+![Forecast Overlay](05_comparison/output/17_forecast_overlay.png)
+*Both models' forecasts plotted on the same axes alongside the actual test data. This overlay makes it easy to see where each model excels or struggles.*
+
+![Residuals Comparison](05_comparison/output/18_residuals_comparison.png)
+*4-panel residual analysis comparing prediction errors from both models. Smaller, more randomly distributed residuals indicate a better fit.*
 
 ---
 
@@ -308,6 +366,8 @@ The `ModelComparison` class loads both serialized models and produces:
 | **MAPE** | 19.06% | 15.81% | Prophet |
 
 **Prophet outperforms SARIMA by 3.25 percentage points on MAPE.**
+
+*Note: Both models are tuned using the same optimization metric (MAPE) via Optuna with TPE sampling and 20 trials each, ensuring a fair comparison.*
 
 ### What the Metrics Mean
 
@@ -361,11 +421,11 @@ Each notebook saves visualizations to its own `output/` directory:
 | Notebook | Plots |
 |----------|-------|
 | 00_data_collection | `01_generated_data_overview.png` |
-| 01_eda | `02` through `08` — attrition trends, decomposition, ACF/PACF, rolling stats |
+| 01_eda | `02_attrition_over_time.png`, `03_attrition_by_department.png`, `04_seasonal_decomposition.png`, `05_headcount_trend.png`, `06_monthly_boxplots.png`, `07_autocorrelation.png`, `08_rolling_statistics.png` |
 | 02_preprocessing | `09_differencing.png`, `10_train_test_split.png` |
 | 03_sarima | `11_sarima_diagnostics.png`, `12_sarima_forecast.png` |
-| 04_prophet | `13` through `15` — default forecast, custom overlay, components |
-| 05_comparison | `16` through `18` — metrics comparison, forecast overlay, residuals |
+| 04_prophet | `13_prophet_forecast_default.png`, `14_prophet_forecast_custom.png`, `15_prophet_components.png` |
+| 05_comparison | `16_metrics_comparison.png`, `17_forecast_overlay.png`, `18_residuals_comparison.png` |
 
 Serialized models are saved to both local disk and S3 for downstream use.
 
@@ -378,6 +438,7 @@ Serialized models are saved to both local disk and S3 for downstream use.
 | **Synthetic data** | Full control over seasonality, trend, and anomalies. Demonstrates ability to design realistic HR scenarios without exposing real employee data. |
 | **Company-level aggregation** | Total attrition rate is the most actionable metric for workforce planning and headcount budgeting. |
 | **SARIMA + Prophet** | Covers both statistical rigor (SARIMA) and business interpretability (Prophet). Running both enables informed model selection. |
+| **MAPE as shared optimization metric** | Both models are tuned to minimize the same metric (MAPE on the test set), ensuring a fair apples-to-apples comparison. |
 | **Optuna for both models** | Consistent hyperparameter optimization framework with TPE sampling and reproducible seeds. |
 | **12-month test window** | Realistic forecast horizon for quarterly and annual planning cycles in HCM. |
 | **95% confidence intervals** | Production forecasting systems need uncertainty quantification for risk assessment and scenario planning. |
@@ -394,4 +455,3 @@ Serialized models are saved to both local disk and S3 for downstream use.
 - **Scalability**: Current pipeline handles a single company. Multi-tenant deployment would partition by company or business unit
 - **Integration**: Forecast output feeds into workforce planning workflows — headcount budgets, recruitment pipeline sizing, and retention program targeting
 - **Ensemble approach**: Averaging SARIMA and Prophet forecasts can reduce variance and improve robustness
-
