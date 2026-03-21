@@ -18,7 +18,6 @@ A production-grade forecasting pipeline that predicts monthly employee attrition
 10. [Getting Started](#getting-started)
 11. [Key Design Decisions](#key-design-decisions)
 12. [Production Considerations](#production-considerations)
-13. [Contact](#contact)
 
 ---
 
@@ -396,10 +395,3 @@ Serialized models are saved to both local disk and S3 for downstream use.
 - **Integration**: Forecast output feeds into workforce planning workflows — headcount budgets, recruitment pipeline sizing, and retention program targeting
 - **Ensemble approach**: Averaging SARIMA and Prophet forecasts can reduce variance and improve robustness
 
----
-
-## Contact
-
-**Aaron England** — [aaron-england.com](https://aaron-england.com)
-
-For questions or collaboration on workforce analytics and time series forecasting.
