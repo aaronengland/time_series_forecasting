@@ -205,3 +205,13 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# macOS
+.DS_Store
+
+# Data files (stored in S3, not in repo)
+00_data_collection/
+*.csv
+
+# Claude Code
+.claude/
