@@ -317,7 +317,6 @@ time_series_forecasting/
 ├── 05_comparison/
 │   └── notebook.ipynb          # Side-by-side metrics, overlaid forecasts, residuals
 ├── requirements.txt
-├── CLAUDE.md
 └── README.md
 ```
 
