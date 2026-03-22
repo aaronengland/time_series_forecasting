@@ -213,7 +213,7 @@ __marimo__/
 00_data_collection/
 *.csv
 
-# Claude Code
+# Claude
 .claude/
 CLAUDE.md
 QUICK_START.md
